@@ -8,7 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -108,6 +110,7 @@ fun OpenCodeAppScreen() {
     var isSending by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     val messages = remember {
         mutableStateListOf(
@@ -115,32 +118,139 @@ fun OpenCodeAppScreen() {
         )
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("OpenCode Mobile", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Text(
-                            text = "Proxy: $proxyUrl | Mode: $selectedMode",
-                            fontSize = 11.sp,
-                            color = Color(0xFF94A3B8),
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1
-                        )
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = Color(0xFF1E293B),
+                drawerContentColor = Color.White,
+                modifier = Modifier
+                    .width(320.dp)
+                    .fillMaxHeight()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text("OpenCode Sidebar", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                    Text("Engine Config & Plugin Settings", fontSize = 12.sp, color = Color(0xFF94A3B8))
+
+                    HorizontalDivider(color = Color(0xFF334155))
+
+                    Text("Network & Proxy Config", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color(0xFF60A5FA))
+
+                    OutlinedTextField(
+                        value = proxyUrl,
+                        onValueChange = {
+                            proxyUrl = it
+                            sharedPrefs.edit().putString("proxy_url", it).apply()
+                        },
+                        label = { Text("Proxy Base URL") },
+                        placeholder = { Text("http://192.168.6.63:4000/v1") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = {
+                            apiKey = it
+                            sharedPrefs.edit().putString("api_key", it).apply()
+                        },
+                        label = { Text("API Key / Bearer Token") },
+                        placeholder = { Text("placeholder-token") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = selectedModel,
+                        onValueChange = {
+                            selectedModel = it
+                            sharedPrefs.edit().putString("selected_model", it).apply()
+                        },
+                        label = { Text("Default Model Target") },
+                        placeholder = { Text("gemini/gemini-3.6-flash") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    HorizontalDivider(color = Color(0xFF334155))
+
+                    Text("Plugins Manager", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color(0xFFF59E0B))
+                    Text("Active Plugins:\n• oh-my-openagent@latest\n• opencode-gpt-imagegen@latest\n• opencode-antigravity-auth", fontSize = 11.sp, color = Color.LightGray)
+
+                    var newPluginName by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = newPluginName,
+                        onValueChange = { newPluginName = it },
+                        label = { Text("Install Plugin Package") },
+                        placeholder = { Text("e.g. oh-my-openagent@latest") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = {
+                            if (newPluginName.isNotBlank()) {
+                                messages.add(ChatMessage("assistant", "Plugin installation triggered for: $newPluginName", selectedAgent, selectedMode))
+                                newPluginName = ""
+                                coroutineScope.launch { drawerState.close() }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                    ) {
+                        Text("Install Plugin")
                     }
-                },
-                actions = {
-                    TextButton(onClick = { showSettingsDialog = true }) {
-                        Text("⚙ Settings", color = Color(0xFF60A5FA), fontWeight = FontWeight.SemiBold)
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    Button(
+                        onClick = { coroutineScope.launch { drawerState.close() } },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
+                    ) {
+                        Text("Close Sidebar")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1E293B),
-                    titleContentColor = Color.White
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("OpenCode Mobile", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(
+                                text = "Proxy: $proxyUrl | Mode: $selectedMode",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8),
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                            Text("☰", fontSize = 20.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                            Text("⚙", fontSize = 18.sp, color = Color(0xFF60A5FA))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF1E293B),
+                        titleContentColor = Color.White
+                    )
                 )
-            )
-        },
+            },
         containerColor = Color(0xFF0F172A)
     ) { paddingValues ->
         Column(
@@ -364,77 +474,6 @@ fun OpenCodeAppScreen() {
                 }
             }
         }
-    }
-
-    // Settings Modal Dialog
-    if (showSettingsDialog) {
-        var tempProxyUrl by remember { mutableStateOf(proxyUrl) }
-        var tempApiKey by remember { mutableStateOf(apiKey) }
-        var tempModel by remember { mutableStateOf(selectedModel) }
-
-        AlertDialog(
-            onDismissRequest = { showSettingsDialog = false },
-            title = { Text("OpenCode Engine Settings", fontWeight = FontWeight.Bold, color = Color.White) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Configure your Proxy Base URL and Model credentials below:", fontSize = 13.sp, color = Color.LightGray)
-
-                    OutlinedTextField(
-                        value = tempProxyUrl,
-                        onValueChange = { tempProxyUrl = it },
-                        label = { Text("Proxy Base URL") },
-                        placeholder = { Text("e.g. http://127.0.0.1:4000/v1") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = tempApiKey,
-                        onValueChange = { tempApiKey = it },
-                        label = { Text("API Key / Bearer Token") },
-                        placeholder = { Text("placeholder-token") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = tempModel,
-                        onValueChange = { tempModel = it },
-                        label = { Text("Default Model Target") },
-                        placeholder = { Text("bifrost-gemini/gemini-3.6-flash") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        proxyUrl = tempProxyUrl
-                        apiKey = tempApiKey
-                        selectedModel = tempModel
-
-                        sharedPrefs.edit()
-                            .putString("proxy_url", tempProxyUrl)
-                            .putString("api_key", tempApiKey)
-                            .putString("selected_model", tempModel)
-                            .apply()
-
-                        showSettingsDialog = false
-                    }
-                ) {
-                    Text("Save Config")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSettingsDialog = false }) {
-                    Text("Cancel", color = Color.Gray)
-                }
-            },
-            containerColor = Color(0xFF1E293B),
-            titleContentColor = Color.White,
-            textContentColor = Color.White
-        )
     }
 }
 

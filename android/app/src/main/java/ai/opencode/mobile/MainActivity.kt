@@ -50,6 +50,13 @@ fun resolveChatEndpoint(baseUrl: String): String {
     }
 }
 
+fun sanitizeModelName(model: String, targetUrl: String): String {
+    if (!targetUrl.contains("/api/chat") && model.startsWith("bifrost-")) {
+        return model.removePrefix("bifrost-")
+    }
+    return model
+}
+
 data class ChatMessage(
     val role: String,
     val content: String,
@@ -231,7 +238,7 @@ fun OpenCodeAppScreen() {
                                                 }
                                             add("messages", msgsArray)
                                         } else {
-                                            addProperty("model", selectedModel)
+                                            addProperty("model", sanitizeModelName(selectedModel, targetUrl))
                                             addProperty("stream", false)
                                             val msgsArray = JsonArray()
                                             messages.filter { (it.role == "user" || it.role == "assistant") && it.content != "Thinking..." }

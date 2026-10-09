@@ -476,6 +476,7 @@ fun OpenCodeAppScreen() {
         }
     }
 }
+}
 
 @Composable
 fun ChatBubble(message: ChatMessage) {

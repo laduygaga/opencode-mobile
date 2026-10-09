@@ -60,7 +60,8 @@ fun sanitizeModelName(model: String, targetUrl: String): String {
 data class ChatMessage(
     val role: String,
     val content: String,
-    val agent: String? = null
+    val agent: String? = null,
+    val mode: String? = null
 )
 
 class MainActivity : ComponentActivity() {
@@ -99,6 +100,9 @@ fun OpenCodeAppScreen() {
     }
 
     var selectedAgent by remember { mutableStateOf("explore") }
+    var selectedMode by remember {
+        mutableStateOf(sharedPrefs.getString("selected_mode", "standard") ?: "standard")
+    }
     var inputText by remember { mutableStateOf("") }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var isSending by remember { mutableStateOf(false) }
@@ -118,7 +122,7 @@ fun OpenCodeAppScreen() {
                     Column {
                         Text("OpenCode Mobile", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(
-                            text = "Proxy: $proxyUrl | Model: $selectedModel",
+                            text = "Proxy: $proxyUrl | Mode: $selectedMode",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8),
                             fontFamily = FontFamily.Monospace,
@@ -149,7 +153,7 @@ fun OpenCodeAppScreen() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF182232))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -161,12 +165,49 @@ fun OpenCodeAppScreen() {
                     fontWeight = FontWeight.SemiBold
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("explore", "librarian", "scout", "summary").forEach { agent ->
+                Row(
+                    modifier = Modifier.padding(start = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("explore", "librarian", "oracle", "metis", "momus", "artistry", "ultrabrain").forEach { agent ->
                         FilterChip(
                             selected = selectedAgent == agent,
                             onClick = { selectedAgent = agent },
-                            label = { Text(agent, fontSize = 11.sp) }
+                            label = { Text(agent, fontSize = 10.sp) }
+                        )
+                    }
+                }
+            }
+
+            // Mode selector bar (oh-my-openagent modes)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0F172A))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Mode: $selectedMode",
+                    color = Color(0xFFF59E0B),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Row(
+                    modifier = Modifier.padding(start = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("standard", "ultrawork", "architect", "deep-research").forEach { mode ->
+                        FilterChip(
+                            selected = selectedMode == mode,
+                            onClick = {
+                                selectedMode = mode
+                                sharedPrefs.edit().putString("selected_mode", mode).apply()
+                            },
+                            label = { Text(mode, fontSize = 10.sp) }
                         )
                     }
                 }
@@ -215,9 +256,9 @@ fun OpenCodeAppScreen() {
                             inputText = ""
                             isSending = true
 
-                            messages.add(ChatMessage("user", userPrompt, selectedAgent))
+                            messages.add(ChatMessage("user", userPrompt, selectedAgent, selectedMode))
                             val assistantMessageIndex = messages.size
-                            messages.add(ChatMessage("assistant", "Thinking...", selectedAgent))
+                            messages.add(ChatMessage("assistant", "Thinking...", selectedAgent, selectedMode))
 
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
@@ -225,8 +266,9 @@ fun OpenCodeAppScreen() {
                                     val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
                                     val requestPayload = JsonObject().apply {
+                                        addProperty("agent", selectedAgent)
+                                        addProperty("mode", selectedMode)
                                         if (targetUrl.contains("/api/chat")) {
-                                            addProperty("agent", selectedAgent)
                                             addProperty("modelOverride", selectedModel)
                                             val msgsArray = JsonArray()
                                             messages.filter { (it.role == "user" || it.role == "assistant") && it.content != "Thinking..." }
@@ -292,7 +334,7 @@ fun OpenCodeAppScreen() {
 
                                     withContext(Dispatchers.Main) {
                                         if (assistantMessageIndex < messages.size) {
-                                            messages[assistantMessageIndex] = ChatMessage("assistant", finalResponseText, selectedAgent)
+                                            messages[assistantMessageIndex] = ChatMessage("assistant", finalResponseText, selectedAgent, selectedMode)
                                         }
                                         isSending = false
                                     }
@@ -300,7 +342,7 @@ fun OpenCodeAppScreen() {
                                     withContext(Dispatchers.Main) {
                                         val errorText = "Network Error: ${e.localizedMessage ?: "Failed to connect to $proxyUrl"}"
                                         if (assistantMessageIndex < messages.size) {
-                                            messages[assistantMessageIndex] = ChatMessage("assistant", errorText, selectedAgent)
+                                            messages[assistantMessageIndex] = ChatMessage("assistant", errorText, selectedAgent, selectedMode)
                                         }
                                         isSending = false
                                     }
@@ -406,14 +448,20 @@ fun ChatBubble(message: ChatMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
-        if (!message.agent.isNullOrEmpty() && !isUser) {
-            Text(
-                text = "agent: @${message.agent}",
-                color = Color(0xFF94A3B8),
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 2.dp)
-            )
+        if (!isUser && (!message.agent.isNullOrEmpty() || !message.mode.isNullOrEmpty())) {
+            val agentLabel = if (!message.agent.isNullOrEmpty()) "@${message.agent}" else ""
+            val modeLabel = if (!message.mode.isNullOrEmpty() && message.mode != "standard") "⚡ ${message.mode}" else ""
+            val tagText = listOf(agentLabel, modeLabel).filter { it.isNotBlank() }.joinToString(" | ")
+
+            if (tagText.isNotBlank()) {
+                Text(
+                    text = tagText,
+                    color = Color(0xFFF59E0B),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+            }
         }
         Box(
             modifier = Modifier

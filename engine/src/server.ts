@@ -78,6 +78,67 @@ app.get("/api/models", (req, res) => {
   }
 });
 
+// GET /api/plugins
+app.get("/api/plugins", (req, res) => {
+  try {
+    const config = loadOpencodeConfig();
+    const installedPlugins = config.plugin || [];
+
+    const availableModes = [
+      { id: "standard", label: "Standard", description: "Default assistant interaction mode" },
+      { id: "ultrawork", label: "Ultrawork", description: "Continuous execution until completion with todo tracking" },
+      { id: "architect", label: "Architect", description: "Metis plan consultant & multi-agent system design mode" },
+      { id: "deep-research", label: "Deep Research", description: "Exhaustive multi-perspective codebase & docs research" }
+    ];
+
+    const availableAgents = [
+      "explore", "librarian", "scout", "summary",
+      "oracle", "metis", "momus", "artistry",
+      "visual-engineering", "ultrabrain", "deep", "quick", "writing"
+    ];
+
+    res.json({
+      success: true,
+      plugins: installedPlugins,
+      modes: availableModes,
+      agents: availableAgents
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/plugins/install
+app.post("/api/plugins/install", async (req, res) => {
+  try {
+    const { packageName, configPath } = req.body;
+    if (!packageName || typeof packageName !== "string") {
+      return res.status(400).json({ success: false, error: "Missing packageName field" });
+    }
+
+    const targetConfigPath = configPath || path.join(process.cwd(), "opencode.json");
+    const raw = fs.readFileSync(targetConfigPath, "utf-8");
+    const json = JSON.parse(raw);
+
+    if (!Array.isArray(json.plugin)) {
+      json.plugin = [];
+    }
+
+    if (!json.plugin.includes(packageName)) {
+      json.plugin.push(packageName);
+      fs.writeFileSync(targetConfigPath, JSON.stringify(json, null, 2), "utf-8");
+    }
+
+    console.log(`[Plugin Install] Installing package ${packageName}...`);
+    const { stdout, stderr } = await execAsync(`npm install ${packageName}`, { cwd: process.cwd() });
+
+    res.json({ success: true, installed: packageName, stdout, stderr });
+  } catch (err: any) {
+    console.error("[Plugin Install Error]:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Built-in Execution Tools for Android OpenCode
 const engineTools = {
   read_file: tool({
@@ -134,7 +195,7 @@ const engineTools = {
 // POST /api/chat
 app.post("/api/chat", async (req, res) => {
   try {
-    const { messages, agent, modelOverride, configPath } = req.body;
+    const { messages, agent, mode, modelOverride, configPath } = req.body;
 
     const config = loadOpencodeConfig(configPath);
     let resolution;
@@ -147,14 +208,24 @@ app.post("/api/chat", async (req, res) => {
       resolution = resolveModel(config.model, config);
     }
 
-    console.log(`[Chat] Routing request to: ${resolution.fullTarget}`);
+    console.log(`[Chat] Routing request to: ${resolution.fullTarget} | Agent: ${agent || "default"} | Mode: ${mode || "standard"}`);
     const languageModel = createModelFromResolution(resolution);
+
+    let systemPrompt = "";
+    if (mode === "ultrawork" || mode === "ultraworker") {
+      systemPrompt = "[MODE: ULTRAWORK / RALPH LOOP ACTIVATED]\nExecute continuously until complete. Track tasks obsessively. Do not yield prematurely until goal is fully met.";
+    } else if (mode === "architect") {
+      systemPrompt = "[MODE: ARCHITECT / METIS PLAN CONSULTANT ACTIVATED]\nAnalyze implicit intent, structure step-by-step breakdown, identify risks and trade-offs before execution.";
+    } else if (mode === "deep-research") {
+      systemPrompt = "[MODE: DEEP RESEARCH ACTIVATED]\nPerform parallel deep search and multi-perspective investigation across codebase and documentation.";
+    }
 
     const result = streamText({
       model: languageModel,
+      system: systemPrompt || undefined,
       messages,
       tools: engineTools,
-      maxSteps: 5,
+      maxSteps: mode === "ultrawork" ? 15 : 5,
     });
 
     result.pipeDataStreamToResponse(res);

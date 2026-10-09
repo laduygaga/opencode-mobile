@@ -1,0 +1,21 @@
+# Node & Engine
+node_modules/
+dist/
+*.log
+
+# Android & Gradle
+.gradle/
+build/
+*/build/
+app/build/
+*.apk
+*.aab
+.idea/
+*.iml
+local.properties
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+/tmp/
+.omo/

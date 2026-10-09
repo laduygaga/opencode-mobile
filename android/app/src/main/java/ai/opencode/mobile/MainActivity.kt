@@ -19,6 +19,36 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
+
+private val okHttpClient = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(60, TimeUnit.SECONDS)
+    .writeTimeout(30, TimeUnit.SECONDS)
+    .build()
+
+private val gson = Gson()
+
+fun resolveChatEndpoint(baseUrl: String): String {
+    val trimmed = baseUrl.trim().trimEnd('/')
+    return when {
+        trimmed.endsWith("/chat/completions") -> trimmed
+        trimmed.endsWith("/api/chat") -> trimmed
+        trimmed.endsWith("/v1") -> "$trimmed/chat/completions"
+        trimmed.endsWith("/api") -> "$trimmed/chat"
+        else -> "$trimmed/v1/chat/completions"
+    }
+}
 
 data class ChatMessage(
     val role: String,
@@ -64,6 +94,9 @@ fun OpenCodeAppScreen() {
     var selectedAgent by remember { mutableStateOf("explore") }
     var inputText by remember { mutableStateOf("") }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var isSending by remember { mutableStateOf(false) }
+
+    val coroutineScope = rememberCoroutineScope()
 
     val messages = remember {
         mutableStateListOf(
@@ -168,24 +201,117 @@ fun OpenCodeAppScreen() {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
+                    enabled = !isSending,
                     onClick = {
-                        if (inputText.isNotBlank()) {
-                            messages.add(ChatMessage("user", inputText, selectedAgent))
-                            val userMsg = inputText
+                        if (inputText.isNotBlank() && !isSending) {
+                            val userPrompt = inputText
                             inputText = ""
+                            isSending = true
 
-                            messages.add(
-                                ChatMessage(
-                                    "assistant",
-                                    "Routing to [@$selectedAgent]\nProxy: $proxyUrl\nModel: $selectedModel\nRequest: \"$userMsg\"",
-                                    selectedAgent
-                                )
-                            )
+                            messages.add(ChatMessage("user", userPrompt, selectedAgent))
+                            val assistantMessageIndex = messages.size
+                            messages.add(ChatMessage("assistant", "Thinking...", selectedAgent))
+
+                            coroutineScope.launch(Dispatchers.IO) {
+                                try {
+                                    val targetUrl = resolveChatEndpoint(proxyUrl)
+                                    val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+                                    val requestPayload = JsonObject().apply {
+                                        if (targetUrl.contains("/api/chat")) {
+                                            addProperty("agent", selectedAgent)
+                                            addProperty("modelOverride", selectedModel)
+                                            val msgsArray = JsonArray()
+                                            messages.filter { (it.role == "user" || it.role == "assistant") && it.content != "Thinking..." }
+                                                .forEach { msg ->
+                                                    msgsArray.add(JsonObject().apply {
+                                                        addProperty("role", msg.role)
+                                                        addProperty("content", msg.content)
+                                                    })
+                                                }
+                                            add("messages", msgsArray)
+                                        } else {
+                                            addProperty("model", selectedModel)
+                                            addProperty("stream", false)
+                                            val msgsArray = JsonArray()
+                                            messages.filter { (it.role == "user" || it.role == "assistant") && it.content != "Thinking..." }
+                                                .forEach { msg ->
+                                                    msgsArray.add(JsonObject().apply {
+                                                        addProperty("role", msg.role)
+                                                        addProperty("content", msg.content)
+                                                    })
+                                                }
+                                            add("messages", msgsArray)
+                                        }
+                                    }
+
+                                    val body = requestPayload.toString().toRequestBody(jsonMediaType)
+                                    val requestBuilder = Request.Builder()
+                                        .url(targetUrl)
+                                        .post(body)
+
+                                    if (apiKey.isNotBlank() && apiKey != "placeholder-token") {
+                                        requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+                                    }
+
+                                    val response = okHttpClient.newCall(requestBuilder.build()).execute()
+                                    val responseBodyStr = response.body?.string() ?: ""
+
+                                    val finalResponseText = if (!response.isSuccessful) {
+                                        "Error [HTTP ${response.code}]: ${responseBodyStr.ifBlank { response.message }}"
+                                    } else {
+                                        try {
+                                            val parsed = gson.fromJson(responseBodyStr, JsonObject::class.java)
+                                            if (parsed.has("choices") && parsed.getAsJsonArray("choices").size() > 0) {
+                                                val choice = parsed.getAsJsonArray("choices")[0].asJsonObject
+                                                if (choice.has("message") && choice.getAsJsonObject("message").has("content")) {
+                                                    choice.getAsJsonObject("message").get("content").asString
+                                                } else if (choice.has("delta") && choice.getAsJsonObject("delta").has("content")) {
+                                                    choice.getAsJsonObject("delta").get("content").asString
+                                                } else {
+                                                    responseBodyStr
+                                                }
+                                            } else if (parsed.has("content")) {
+                                                parsed.get("content").asString
+                                            } else if (parsed.has("text")) {
+                                                parsed.get("text").asString
+                                            } else {
+                                                responseBodyStr
+                                            }
+                                        } catch (e: Exception) {
+                                            responseBodyStr
+                                        }
+                                    }
+
+                                    withContext(Dispatchers.Main) {
+                                        if (assistantMessageIndex < messages.size) {
+                                            messages[assistantMessageIndex] = ChatMessage("assistant", finalResponseText, selectedAgent)
+                                        }
+                                        isSending = false
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        val errorText = "Network Error: ${e.localizedMessage ?: "Failed to connect to $proxyUrl"}"
+                                        if (assistantMessageIndex < messages.size) {
+                                            messages[assistantMessageIndex] = ChatMessage("assistant", errorText, selectedAgent)
+                                        }
+                                        isSending = false
+                                    }
+                                }
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
                 ) {
-                    Text("Send")
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Send")
+                    }
                 }
             }
         }
